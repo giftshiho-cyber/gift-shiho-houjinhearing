@@ -2085,7 +2085,7 @@ async function kintoneRequest(token, url, method, body) {
   return await res.json();
 }
 
-async function pushToKintone(corpData, officersData, agmTiming, artResult) {
+async function pushToKintone(corpData, officersData, agmTiming, artResult, driveFolderUrl) {
   const cfg = JSON.parse(localStorage.getItem('nk_ktconfig') || '{}');
   if(!cfg.gasUrl || !cfg.tokenMaster || !cfg.appMaster) return { ok: false, reason: 'kintone未設定' };
   const baseUrl = `https://${cfg.domain}.cybozu.com`;
@@ -2133,6 +2133,7 @@ async function pushToKintone(corpData, officersData, agmTiming, artResult) {
         shiho_contract:   { value: '顧問契約なし' },
         term_status:      { value: '必須' },
         officer_table:    { value: officerRows },
+        ...(driveFolderUrl ? { drive_folder_url: { value: driveFolderUrl } } : {}),
       };
       if(existRecord2) {
         await kintoneRequest(cfg.tokenCorp, `${baseUrl}/k/v1/record.json`, 'PUT', { app: cfg.appCorp, id: existRecord2.$id.value, record: corpRecord });
@@ -2887,17 +2888,40 @@ function executeImport() {
   const cfg = JSON.parse(localStorage.getItem('nk_ktconfig') || '{}');
   if(cfg.gasUrl && cfg.tokenMaster) {
     const btn = document.getElementById('import-register-btn');
-    if(btn) { btn.disabled = true; btn.textContent = '⏳ kintoneに登録中...'; }
-    pushToKintone(corp, ofs, pendingImportData.agmTiming, art).then(result => {
+    if(btn) { btn.disabled = true; btn.textContent = '⏳ 登録中...'; }
+
+    const runAll = async () => {
+      // Googleドライブフォルダを自動作成
+      let driveFolderUrl = '';
+      try {
+        const params = new URLSearchParams({
+          action: 'createFolder',
+          folderName: corp.corpName,
+          corpType: corp.corpType || '',
+        });
+        const res = await fetch(`${cfg.gasUrl}?${params.toString()}`);
+        const data = await res.json();
+        if(data.folderUrl) {
+          driveFolderUrl = data.folderUrl;
+          toast(`📁 ドライブフォルダ作成：${corp.corpName}`, 'success');
+        }
+      } catch(e) {
+        console.warn('ドライブフォルダ作成失敗:', e.message);
+      }
+
+      // kintoneに登録（フォルダURLも渡す）
+      const result = await pushToKintone(corp, ofs, pendingImportData.agmTiming, art, driveFolderUrl);
       if(btn) { btn.disabled = false; btn.textContent = '✅ 登録する'; }
       if(result.ok) {
         const masterMsg = result.results?.master?.ok ? `顧客マスタ（${result.results.master.action}）` : '顧客マスタ失敗';
         const corpMsg = result.results?.corp ? (result.results.corp.ok ? `会社法人詳細（${result.results.corp.action}）` : '会社法人詳細失敗') : '';
         toast(`✅ kintone登録完了：${masterMsg}${corpMsg?'・'+corpMsg:''}`, 'success');
       }
-    }).catch(e => {
+    };
+
+    runAll().catch(e => {
       if(btn) { btn.disabled = false; btn.textContent = '✅ 登録する'; }
-      toast(`⚠️ kintone登録エラー: ${e.message}`, 'error');
+      toast(`⚠️ 登録エラー: ${e.message}`, 'error');
     });
   }
   cancelImport();
