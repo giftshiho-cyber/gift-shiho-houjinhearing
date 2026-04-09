@@ -2893,6 +2893,7 @@ function executeImport() {
     const btn = document.getElementById('import-register-btn');
     if(btn) { btn.disabled = true; btn.textContent = '⏳ 登録中...'; }
 
+    const articlesFileSnapshot = pendingImportData?.articlesFile || null;
     const runAll = async () => {
       // Googleドライブフォルダを自動作成
       let driveFolderUrl = '';
@@ -2914,9 +2915,9 @@ function executeImport() {
 
       // 定款ファイルをGoogleドライブにアップロード
       let articlesDriveUrl = '';
-      if(driveFolderUrl && pendingImportData?.articlesFile) {
+      if(driveFolderUrl && articlesFileSnapshot) {
         try {
-          const articlesFile = pendingImportData.articlesFile;
+          const articlesFile = articlesFileSnapshot;
           const today = new Date();
           const dateStr = today.getFullYear().toString() +
             String(today.getMonth()+1).padStart(2,'0') +
