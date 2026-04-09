@@ -2085,7 +2085,7 @@ async function kintoneRequest(token, url, method, body) {
   return await res.json();
 }
 
-async function pushToKintone(corpData, officersData, agmTiming, artResult, driveFolderUrl) {
+async function pushToKintone(corpData, officersData, agmTiming, artResult, driveFolderUrl, articlesDriveUrl) {
   const cfg = JSON.parse(localStorage.getItem('nk_ktconfig') || '{}');
   if(!cfg.gasUrl || !cfg.tokenMaster || !cfg.appMaster) return { ok: false, reason: 'kintone未設定' };
   const baseUrl = `https://${cfg.domain}.cybozu.com`;
@@ -2134,6 +2134,7 @@ async function pushToKintone(corpData, officersData, agmTiming, artResult, drive
         term_status:      { value: '必須' },
         officer_table:    { value: officerRows },
         ...(driveFolderUrl ? { drive_folder_url: { value: driveFolderUrl } } : {}),
+        ...(articlesDriveUrl ? { articles_drive_url: { value: articlesDriveUrl } } : {}),
       };
       if(existRecord2) {
         await kintoneRequest(cfg.tokenCorp, `${baseUrl}/k/v1/record.json`, 'PUT', { app: cfg.appCorp, id: existRecord2.$id.value, record: corpRecord });
@@ -2290,6 +2291,8 @@ function loadMammoth(cb) { MAMMOTH_LIB = window.mammoth; cb(); }
 async function processArticlesFile(file) {
   const allowed = /\.(pdf|docx|doc|txt)$/i;
   if(!allowed.test(file.name)) { toast('対応形式は PDF / Word / TXT のみです', 'error'); return; }
+  // 定款ファイルをpendingImportDataに保存（後でドライブアップロードに使用）
+  if(pendingImportData) pendingImportData.articlesFile = file;
 
   document.getElementById('articles-drop-zone').style.display = 'none';
   document.getElementById('articles-analyzing').style.display = 'block';
@@ -2909,9 +2912,74 @@ function executeImport() {
         console.warn('ドライブフォルダ作成失敗:', e.message);
       }
 
+      // 定款ファイルをGoogleドライブにアップロード
+      let articlesDriveUrl = '';
+      if(driveFolderUrl && pendingImportData?.articlesFile) {
+        try {
+          const articlesFile = pendingImportData.articlesFile;
+          const today = new Date();
+          const dateStr = today.getFullYear().toString() +
+            String(today.getMonth()+1).padStart(2,'0') +
+            String(today.getDate()).padStart(2,'0');
+          const ext = articlesFile.name.split('.').pop();
+          const fileName = `${dateStr}_定款.${ext}`;
+
+          // ファイルをBase64に変換
+          const arrayBuffer = await articlesFile.arrayBuffer();
+          const uint8Array = new Uint8Array(arrayBuffer);
+          let binary = '';
+          uint8Array.forEach(b => binary += String.fromCharCode(b));
+          const base64 = btoa(binary);
+
+          // 定款フォルダIDを取得（法人フォルダのサブフォルダ）
+          const folderParams = new URLSearchParams({
+            action: 'createFolder',
+            folderName: corp.corpName,
+            corpType: corp.corpType || '',
+          });
+          const folderRes = await fetch(`${cfg.gasUrl}?${folderParams.toString()}`);
+          const folderData = await folderRes.json();
+          const clientFolderId = folderData.folderId;
+
+          if(clientFolderId) {
+            // 定款サブフォルダのIDを取得
+            const subParams = new URLSearchParams({
+              action: 'getSubFolderId',
+              parentFolderId: clientFolderId,
+              subFolderName: '定款',
+            });
+            const subRes = await fetch(`${cfg.gasUrl}?${subParams.toString()}`);
+            const subData = await subRes.json();
+            const articlesFolderId = subData.folderId;
+
+            if(articlesFolderId) {
+              // ファイルをアップロード
+              const uploadRes = await fetch(cfg.gasUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify({
+                  action: 'uploadFile',
+                  folderId: articlesFolderId,
+                  fileName: fileName,
+                  fileBase64: base64,
+                  mimeType: articlesFile.type || 'application/octet-stream',
+                })
+              });
+              const uploadData = await uploadRes.json();
+              if(uploadData.fileUrl) {
+                articlesDriveUrl = uploadData.fileUrl;
+                toast(`📄 定款アップロード完了：${fileName}`, 'success');
+              }
+            }
+          }
+        } catch(e) {
+          console.warn('定款アップロード失敗:', e.message);
+        }
+      }
+
       // kintoneに登録（フォルダURLも渡す）
       const agmTiming = pendingImportData ? pendingImportData.agmTiming : 2;
-      const result = await pushToKintone(corp, ofs, agmTiming, art, driveFolderUrl);
+      const result = await pushToKintone(corp, ofs, agmTiming, art, driveFolderUrl, articlesDriveUrl);
       if(btn) { btn.disabled = false; btn.textContent = '✅ 登録する'; }
       if(result.ok) {
         const masterMsg = result.results?.master?.ok ? `顧客マスタ（${result.results.master.action}）` : '顧客マスタ失敗';
