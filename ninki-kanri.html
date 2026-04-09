@@ -2910,7 +2910,8 @@ function executeImport() {
       }
 
       // kintoneに登録（フォルダURLも渡す）
-      const result = await pushToKintone(corp, ofs, pendingImportData.agmTiming, art, driveFolderUrl);
+      const agmTiming = pendingImportData ? pendingImportData.agmTiming : 2;
+      const result = await pushToKintone(corp, ofs, agmTiming, art, driveFolderUrl);
       if(btn) { btn.disabled = false; btn.textContent = '✅ 登録する'; }
       if(result.ok) {
         const masterMsg = result.results?.master?.ok ? `顧客マスタ（${result.results.master.action}）` : '顧客マスタ失敗';
